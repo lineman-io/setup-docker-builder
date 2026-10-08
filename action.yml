@@ -1,0 +1,78 @@
+# runners.io setup-docker-builder (RUN-109): the Docker layer cache in one line.
+#
+#     - uses: lineman-io/setup-docker-builder@v1
+#
+# and every later `docker build`, `docker buildx build` and
+# docker/build-push-action step in the job reads and writes the runners.io layer
+# cache, with no flags. Before this a customer wrote the wiring by hand -- a
+# container-driver builder, a ref, cache-from, cache-to, and the guest service
+# port (WARP-271) -- and two of those fail silently when wrong: the docker
+# driver ignores cache-to, and a mistyped ref simply never hits.
+#
+# On any runner that is not a runners.io runner it changes nothing and says so
+# in one notice, so a workflow that also runs on GitHub-hosted runners can carry
+# it unconditionally.
+#
+# WHERE IT LIVES. The source is a directory in runners.io's private monorepo,
+# and an action in a private repository can be used only from inside it, so
+# customers use a PUBLIC copy: these four files at the root of the repository
+# on the line below, tagged v1.x.y, with v1 moved to the newest (RUN-617). The
+# copy is byte-identical to the source, and the monorepo's
+# verifier-self-tests.yml fails when it is not, so a change lands in the
+# monorepo first and is then published as a new v1.x.y. The monorepo also binds
+# this line, by test, to the docs page customers paste it from: a `uses:` that
+# does not resolve fails a customer's job before any of its steps run.
+#
+# Published as: lineman-io/setup-docker-builder
+#
+# Files: setup.sh (what runs), docker-buildx-shim.sh (what makes it automatic),
+# self-test.sh (both, against a fake docker, no network).
+name: runners.io setup docker builder
+description: >-
+  Point every Docker build in the job at the runners.io layer cache, in one
+  line. On any other runner it does nothing and says so.
+author: runners.io
+
+inputs:
+  automatic:
+    description: >-
+      'true' (the default): every docker build after this step that names no
+      cache of its own uses the layer cache. 'false': only the builder is set
+      up; pass the cache-from and cache-to outputs to your build yourself.
+    required: false
+    default: 'true'
+  key:
+    description: >-
+      The cache's name for this image. Leave it empty and each image gets its
+      own, derived from its Dockerfile, target and local context, so two images
+      built in one job do not overwrite each other's cache. Set it to share one
+      cache between builds that would otherwise get different ones.
+    required: false
+    default: ''
+
+outputs:
+  enabled:
+    description: "'true' when the layer cache is set up for this job, 'false' when this step did nothing."
+    value: ${{ steps.setup.outputs.enabled }}
+  builder:
+    description: The buildx builder the job now uses. Empty when enabled is false.
+    value: ${{ steps.setup.outputs.builder }}
+  ref:
+    description: The cache reference for `key` (or `default`). Empty when enabled is false.
+    value: ${{ steps.setup.outputs.ref }}
+  cache-from:
+    description: A cache-from value for that reference. Empty when enabled is false, which docker/build-push-action reads as no cache.
+    value: ${{ steps.setup.outputs.cache-from }}
+  cache-to:
+    description: A cache-to value for that reference. Empty when enabled is false.
+    value: ${{ steps.setup.outputs.cache-to }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        INPUT_AUTOMATIC: ${{ inputs.automatic }}
+        INPUT_KEY: ${{ inputs.key }}
+      run: '"${GITHUB_ACTION_PATH}/setup.sh"'
